@@ -1,0 +1,17 @@
+{
+  "name": "rotation-tracker-db",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "gen:types": "npx supabase gen types typescript --local > types/db.ts"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.98.0",
+    "date-fns": "^4.1.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.6"
+  }
+}
