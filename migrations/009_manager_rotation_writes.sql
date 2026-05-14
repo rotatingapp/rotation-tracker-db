@@ -76,17 +76,17 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- INSERT WITH CHECK: P-04 guard prevents manager writing rotations for themselves
-DO $$ BEGIN
-  CREATE POLICY "Managers can INSERT rotations for assigned crew"
-    ON rotations FOR INSERT
-    WITH CHECK (
-      is_manager_of_user(NEW.user_id)
-      AND NEW.user_id != (SELECT auth.uid())
-      AND NEW.created_via = 'manager'
-    );
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+-- INSERT WITH CHECK: P-04 guard prevents manager writing rotations for themselves.
+-- Cannot use DO $$ wrapper because NEW is not valid in PL/pgSQL DO block context.
+-- In RLS WITH CHECK, bare column names refer to the new row implicitly — no NEW. prefix needed.
+DROP POLICY IF EXISTS "Managers can INSERT rotations for assigned crew" ON rotations;
+CREATE POLICY "Managers can INSERT rotations for assigned crew"
+  ON rotations FOR INSERT
+  WITH CHECK (
+    is_manager_of_user(user_id)
+    AND user_id != (SELECT auth.uid())
+    AND created_via = 'manager'
+  );
 
 -- UPDATE USING: locked = false prevents editing locked rotations
 DO $$ BEGIN
@@ -116,13 +116,13 @@ END $$;
 -- partnership data and Gantt context are available.
 CREATE OR REPLACE FUNCTION public.manager_upsert_rotation(
   p_user_id       UUID,
-  p_rotation_id   UUID DEFAULT NULL,
   p_start_date    DATE,
   p_end_date      DATE,
   p_rotation_type TEXT,
   p_crew_member   TEXT,
-  p_notes         TEXT DEFAULT NULL,
-  p_location      TEXT DEFAULT NULL
+  p_rotation_id   UUID    DEFAULT NULL,
+  p_notes         TEXT    DEFAULT NULL,
+  p_location      TEXT    DEFAULT NULL
 )
 RETURNS UUID
 LANGUAGE plpgsql
