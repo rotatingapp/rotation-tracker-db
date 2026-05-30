@@ -539,6 +539,7 @@ export type Database = {
           display_name: string
           end_date: string
           is_projected: boolean
+          locked: boolean
           position_sort_order: number
           position_title: string
           rotation_id: string
