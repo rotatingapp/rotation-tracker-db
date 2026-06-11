@@ -27,7 +27,7 @@ The crew app (`rotationtracker.app`) reads from these management-app-owned table
 
 | Table | Columns Read | Access Method | Consumer Purpose |
 |-------|-------------|---------------|-----------------|
-| `org_events` | `id, vessel_id, event_type, title, start_date, end_date, description, color` | Direct SELECT (RLS: user is org member) | Calendar overlay and events list display |
+| `org_events` | `id, vessel_id, event_type, title, start_date, end_date, description, color, updated_at` | Direct SELECT (RLS: user is org member) | Calendar overlay, events list display, and TOAST-02 change detection (`updated_at` stamp comparison across syncs) |
 | `org_memberships` | `id, org_id, user_id, role, accepted_at` | Direct SELECT (RLS: own membership) | Org context hydration — determines which org/vessel the crew member belongs to |
 | `crew_assignments` | `id, position_id, user_id, start_date, end_date` | Direct SELECT (RLS: own assignment) | Active assignment detection — determines which position the crew member is in |
 | `crew_positions` | `id, vessel_id, title, is_rotating, rotation_pair_id, sort_order` | Via `crew_assignments` JOIN | Position title display; `is_rotating` and `rotation_pair_id` determine partner pairing |
@@ -51,7 +51,7 @@ These columns exist on the tables above but are **not consumed cross-app**. They
 
 | Table | Safe Columns | Reason |
 |-------|-------------|--------|
-| `org_events` | `event_type_id, created_by, created_at, updated_at` | Not in crew app's `LocalOrgEvent` type |
+| `org_events` | `event_type_id, created_by, created_at` | Not in crew app's `LocalOrgEvent` type (`updated_at` joined the read set 2026-06-11 for TOAST-02) |
 | `org_event_types` | **entire table** | Crew app does not consume `org_event_types` |
 | `org_memberships` | `invited_by, created_at` | Not used in crew app org context hydration |
 | `vessels` | `imo_number` | Not in crew app vessel display |
@@ -69,7 +69,7 @@ These columns were added to `rotations` by migration 009 for manager rotation wr
 | Column | Table | Default | Cross-app impact |
 |--------|-------|---------|-----------------|
 | `locked` | `rotations` | `false` | Crew app reads `locked` to display lock state in rotation UI — **crew app IS a reader of this column** (see row 2 of Management reads table above) |
-| `created_via` | `rotations` | `'crew'` | Management app distinguishes crew-authored vs manager-authored rotations; crew app does not currently display this field |
+| `created_via` | `rotations` | `'crew'` | Management app distinguishes crew-authored vs manager-authored rotations; crew app reads it since Phase 5 (2026-06-11) for manager attribution in DayPopup, the manager-locked calendar border, and TOAST-05 manager-rotation toasts |
 
 ---
 
