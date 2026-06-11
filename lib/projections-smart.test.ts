@@ -232,6 +232,26 @@ describe('generateSmartProjections — important dates', () => {
 		expect(d5.shiftDays).toBe(0);
 	});
 
+	it('defaults flexDays to 7: a −7 shift is reachable, −8 is not (edge case 5)', () => {
+		// Boundary 3 (nominal Mar 26): 2026-03-19 needs −7 (just inside default
+		// flex), 2026-03-18 would need −8 (just outside).
+		const reachable = generateSmartProjections(
+			baseConfig(),
+			emptyContext({ importantDates: [idate('2026-03-19', 5, 'Edge')] })
+		);
+		expect(reachable.decisions.find((d) => d.periodIndex === 3)!.shiftDays).toBe(-7);
+		expect(reachable.score.importantDatesSatisfied).toBe(1);
+
+		const unreachable = generateSmartProjections(
+			baseConfig(),
+			emptyContext({ importantDates: [idate('2026-03-18', 5, 'Edge')] })
+		);
+		expect(unreachable.decisions.every((d) => d.shiftDays === 0)).toBe(true);
+		expect(unreachable.unresolved).toEqual([
+			{ date: '2026-03-18', label: 'Edge', priority: 5, reason: 'out-of-flex' },
+		]);
+	});
+
 	it('never shifts for an already-satisfied date', () => {
 		// 2026-02-10 is off (P1) under the linear plan already
 		const result = generateSmartProjections(
