@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # migration-replay.sh
 #
-# Applies all consolidated migrations (001..010) to a local Supabase instance
-# and runs fixture assertions for critical pitfalls P-02 and P-04.
+# Applies all migrations to a local Supabase instance and runs fixture
+# assertions for critical pitfalls P-02 and P-04, plus the SEC-01 grant check.
 #
 # Prerequisites:
 #   - supabase start has already been run (local Supabase Docker stack is up)
@@ -235,5 +235,45 @@ else
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# SEC-01 Assertion: No SECURITY DEFINER function may be anon-executable
+#
+# Guards against the regression class where CREATE OR REPLACE FUNCTION in a
+# later migration re-acquires the default PUBLIC EXECUTE grant (this happened
+# with migrations 011/012 after the 2026-05-14 revoke).
+#
+# Allowed exceptions (documented in 014_function_grants_and_guards.sql):
+#   - get_partner_id()          — RLS policy helper on rotations/profiles quals;
+#   - is_manager_of_user(uuid)  — evaluated during anon share-link reads.
+# Both are caller-scoped predicates returning NULL/false for anon.
+# ---------------------------------------------------------------------------
+echo "==> Running SEC-01 assertion (no anon-executable SECURITY DEFINER functions)..."
+
+SEC01_RESULT=$(psql "$LOCAL_DB_URL" --tuples-only --no-align <<'SQL'
+SELECT CASE WHEN count(*) = 0 THEN 'SEC01_OK'
+       ELSE 'SEC01_FAIL: ' || string_agg(p.proname || ' (' || pr.grantee || ')', ', ')
+       END
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN information_schema.routine_privileges pr
+  ON pr.routine_schema = 'public' AND pr.routine_name = p.proname
+  AND pr.privilege_type = 'EXECUTE'
+WHERE n.nspname = 'public'
+  AND p.prosecdef
+  AND (
+    pr.grantee = 'PUBLIC'
+    OR (pr.grantee = 'anon' AND p.proname NOT IN ('get_partner_id', 'is_manager_of_user'))
+  );
+SQL
+)
+
+if echo "$SEC01_RESULT" | grep -q 'SEC01_OK'; then
+  echo "==> SEC-01 assertion: PASSED (no unexpected PUBLIC/anon EXECUTE on SECURITY DEFINER functions)"
+else
+  echo "==> SEC-01 assertion: FAILED"
+  echo "$SEC01_RESULT"
+  exit 1
+fi
+
 echo ""
-echo "==> migration-replay.sh complete. All 10 migrations applied; P-02 and P-04 fixtures passed."
+echo "==> migration-replay.sh complete. All migrations applied; P-02, P-04 and SEC-01 checks passed."
