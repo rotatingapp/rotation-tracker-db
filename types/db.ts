@@ -587,6 +587,10 @@ export type Database = {
         Args: { p_rotation_id: string }
         Returns: undefined
       }
+      manager_set_rotation_lock: {
+        Args: { p_locked: boolean; p_rotation_id: string }
+        Returns: undefined
+      }
       manager_upsert_rotation: {
         Args: {
           p_crew_member: string
