@@ -296,3 +296,22 @@ CREATE POLICY "Users can manage own notes" ON public.notes
   USING (user_id = ( SELECT auth.uid() AS uid))
   WITH CHECK (user_id = ( SELECT auth.uid() AS uid));
 
+-- ── important_dates partner-read policy ─────────────────────────────────────
+-- Migration 012 creates this policy inside a guard that skips when partnerships
+-- is absent — which on replay it always was until this backfill. Recreate it
+-- here (guarded on important_dates existing) so replay converges with prod.
+
+DO $$
+BEGIN
+  IF to_regclass('public.important_dates') IS NOT NULL THEN
+    EXECUTE 'DROP POLICY IF EXISTS "Partners read each other''s important dates" ON public.important_dates';
+    EXECUTE $pol$
+      CREATE POLICY "Partners read each other's important dates" ON public.important_dates
+        FOR SELECT
+        USING (EXISTS ( SELECT 1
+           FROM partnerships p
+          WHERE ((p.status = 'accepted'::text) AND (((p.inviter_id = ( SELECT auth.uid() AS uid)) AND (p.invitee_id = important_dates.user_id)) OR ((p.invitee_id = ( SELECT auth.uid() AS uid)) AND (p.inviter_id = important_dates.user_id))))))
+    $pol$;
+  END IF;
+END $$;
+

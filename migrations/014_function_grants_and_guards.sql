@@ -43,6 +43,10 @@ BEGIN
 END;
 $function$;
 
+-- Replay note (2026-07-07): repo migration 006 declared an extra `email` column
+-- that never existed on prod's version — DROP first or CREATE OR REPLACE errors
+-- with "cannot change return type". Grants are re-asserted below either way.
+DROP FUNCTION IF EXISTS public.lookup_user_by_id(uuid);
 CREATE OR REPLACE FUNCTION public.lookup_user_by_id(p_user_id uuid)
  RETURNS TABLE(id uuid, display_name text, avatar_url text)
  LANGUAGE plpgsql

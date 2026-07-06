@@ -17,6 +17,10 @@
 -- ── (a) get_vessel_rotations — adds locked to return ────────────────────────
 -- Delta: `locked boolean` added to RETURNS TABLE; `r.locked` added to SELECT list.
 -- All other columns, JOIN conditions, ORDER BY, and WHERE filters identical to migration 002.
+-- Changing a RETURNS TABLE column list requires dropping the old definition first
+-- (CREATE OR REPLACE errors with "cannot change return type") — surfaced by the
+-- strict replay 2026-07-07.
+DROP FUNCTION IF EXISTS public.get_vessel_rotations(uuid, date, date);
 CREATE OR REPLACE FUNCTION public.get_vessel_rotations(
   p_vessel_id  UUID,
   p_start_date DATE,
