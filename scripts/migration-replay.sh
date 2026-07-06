@@ -32,11 +32,14 @@ echo "==> Using DB URL: $LOCAL_DB_URL"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Apply all migrations in filename order
+# Apply all migrations in filename order.
+# ON_ERROR_STOP is essential: without it psql prints errors and exits 0,
+# which green-washed replays for months (014's revokes on then-missing
+# partnership functions errored invisibly until 013b backfilled them).
 echo "==> Applying migrations..."
 for migration in "$REPO_ROOT"/migrations/*.sql; do
   echo "    Applying: $(basename "$migration")"
-  psql "$LOCAL_DB_URL" -f "$migration"
+  psql "$LOCAL_DB_URL" -v ON_ERROR_STOP=1 -f "$migration"
 done
 
 echo "==> All migrations applied successfully."
