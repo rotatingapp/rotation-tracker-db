@@ -86,6 +86,20 @@ Adding new columns to tables listed above does **not** require coordination — 
 
 ---
 
-*Last updated: 2026-05-13*
+## Deferred index review (2026-07-04)
+
+The performance advisor flags these indexes as unused (`idx_scan = 0`). They
+are deliberately KEPT — usage stats reset on restarts and the app is young.
+Revisit after ~30 days (early August 2026) and drop the ones still at zero:
+
+`idx_org_events_dates`, `org_events_event_type_id_idx`, `org_events_vessel_id_idx`,
+`idx_partnerships_email`, `idx_partnerships_invitee`, `idx_partnerships_inviter`,
+`idx_partnerships_link_code`, `idx_partnerships_status`, `idx_rotations_is_projected`.
+
+(The 7 `idx_*` duplicates of `*_idx` originals were dropped in migration 016.)
+
+---
+
+*Last updated: 2026-07-04*
 *Schema repo: `rotation-tracker-db` (git submodule at `./db` in both apps)*
 *Supabase project: `yuhdlfnvxhgeyemfmyjo.supabase.co`*
