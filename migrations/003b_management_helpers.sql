@@ -1,4 +1,6 @@
--- 005_management_helpers.sql
+-- 003b_management_helpers.sql (renamed from 005_ on 2026-07-07: the strict
+-- replay exposed that 004_management_rls.sql references these helpers, so the
+-- old number violated this file's own "apply BEFORE 004" requirement)
 -- RLS helper functions: is_org_creator and is_org_manager.
 -- Source: mgmt 009_fix_rls_recursion_and_returning.sql lines 19-60 (verbatim)
 --
