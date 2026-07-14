@@ -8,7 +8,7 @@ Updated when schema changes. Never remove a column listed here without coordinat
 
 ## Management app reads from crew-owned tables
 
-The management app (`manage.rotationtracker.app`) reads from these crew-app-owned tables. Direct `SELECT` on these tables is **not allowed** from the management app — access is only via SECURITY DEFINER RPCs that enforce RLS at the function boundary.
+The management app (`manage.rotationtracker.app`) reads from these crew-app-owned tables. Direct `SELECT` on these tables is **not allowed** from the management app — access is only via SECURITY DEFINER RPCs that enforce RLS at the function boundary. **Exception:** `important_dates` grants managers a direct-SELECT RLS policy (migration 012) because rows are per-member, not per-vessel — see its rows below.
 
 | Table | Columns Read | Access Method | Consumer Purpose |
 |-------|-------------|---------------|-----------------|
@@ -16,6 +16,8 @@ The management app (`manage.rotationtracker.app`) reads from these crew-app-owne
 | `rotations` | `id, user_id, start_date, end_date, rotation_type, crew_member, is_projected, locked, created_via, updated_at` | `manager_upsert_rotation`, `manager_delete_rotation` SECURITY DEFINER RPCs | Manager writes — read-before-write for overlap detection and lock checks |
 | `profiles` | `id, display_name, avatar_url` | `get_vessel_rotations`, `lookup_user_by_id`, `lookup_users_by_ids` SECURITY DEFINER RPCs | Crew member display names and avatars in Gantt and invite flows |
 | `auth.users` | `id, email` | `lookup_user_by_email`, `lookup_users_by_ids` via `JOIN auth.users u ON u.id = p.id` — SECURITY DEFINER RPCs | Email-based crew invite lookup; `u.email::text` cast required (B-08: `auth.users.email` is `varchar(255)`) |
+| `important_dates` | `id, user_id, date, label, priority, recur_yearly, created_by` | Direct SELECT — "Managers read important dates for assigned crew" RLS policy (migration 012, uses `is_manager_of_user`) | Smart projector inputs (`/year` workspace + `crew/[memberId]` loader, flag-gated) |
+| `important_dates` | writes: `user_id, date, label, priority, recur_yearly, created_by` | `manager_add_important_date`, `manager_delete_important_date` SECURITY DEFINER RPCs (migration 018) | Manager-entered dates, **max 3 per crew member** (cap enforced in the add RPC). `created_by <> user_id` marks manager authorship; the delete RPC refuses crew-entered rows. Crew own-CRUD RLS is untouched — members see/edit/delete every row on their own calendar, and the crew app syncs manager rows with no code change (`select('*')`). |
 
 **Note on email access:** `profiles` does NOT have an `email` column. Email must be read from `auth.users` via a `JOIN` inside a SECURITY DEFINER RPC. The cast `u.email::text` is mandatory (B-08). Never query `profiles.email` (B-09).
 
