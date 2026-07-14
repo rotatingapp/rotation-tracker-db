@@ -120,6 +120,39 @@ export type Database = {
         }
         Relationships: []
       }
+      important_dates: {
+        Row: {
+          created_at: string | null
+          created_by: string
+          date: string
+          id: string
+          label: string
+          priority: number
+          recur_yearly: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string
+          date: string
+          id?: string
+          label: string
+          priority?: number
+          recur_yearly?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string
+          date?: string
+          id?: string
+          label?: string
+          priority?: number
+          recur_yearly?: boolean
+          user_id?: string
+        }
+        Relationships: []
+      }
       notes: {
         Row: {
           content: string
@@ -289,6 +322,7 @@ export type Database = {
           created_by: string
           id: string
           name: string
+          rotation_colors: Json | null
           type: string
           updated_at: string | null
         }
@@ -297,6 +331,7 @@ export type Database = {
           created_by: string
           id?: string
           name: string
+          rotation_colors?: Json | null
           type?: string
           updated_at?: string | null
         }
@@ -305,6 +340,7 @@ export type Database = {
           created_by?: string
           id?: string
           name?: string
+          rotation_colors?: Json | null
           type?: string
           updated_at?: string | null
         }
@@ -579,9 +615,23 @@ export type Database = {
           id: string
         }[]
       }
+      manager_add_important_date: {
+        Args: {
+          p_date: string
+          p_label: string
+          p_priority?: number
+          p_recur_yearly?: boolean
+          p_user_id: string
+        }
+        Returns: string
+      }
       manager_bulk_create_rotations: {
         Args: { p_rotations: Json; p_user_id: string }
         Returns: number
+      }
+      manager_delete_important_date: {
+        Args: { p_id: string }
+        Returns: undefined
       }
       manager_delete_rotation: {
         Args: { p_rotation_id: string }
