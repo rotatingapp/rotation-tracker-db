@@ -239,6 +239,150 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# X-01 Fixture: Crew member must be able to READ a manager-authored rotation
+#
+# This is the invariant the whole mgmt→crew sync rests on: the management app
+# writes rotations for a crew member (created_via='manager'), and the crew
+# app's pullRotations reads them under the member's own auth. If the rotations
+# SELECT policy loses the user_id = auth.uid() arm, sync silently stops.
+# ---------------------------------------------------------------------------
+echo "==> Running X-01 fixture (crew can read manager-authored rotation)..."
+
+X01_RESULT=$(psql "$LOCAL_DB_URL" --tuples-only --no-align <<'SQL'
+DO $$
+DECLARE
+  v_manager_id  UUID := gen_random_uuid();
+  v_crew_id     UUID := gen_random_uuid();
+  v_org_id      UUID;
+  v_vessel_id   UUID;
+  v_position_id UUID;
+  v_count       INT;
+BEGIN
+  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, aud, role)
+  VALUES
+    (v_manager_id, 'x01-manager-test@example.com', 'x', now(), now(), now(), '{}', '{}', 'authenticated', 'authenticated'),
+    (v_crew_id,    'x01-crew-test@example.com',    'x', now(), now(), now(), '{}', '{}', 'authenticated', 'authenticated')
+  ON CONFLICT (id) DO NOTHING;
+
+  INSERT INTO organizations (id, name, created_by)
+  VALUES (gen_random_uuid(), 'X01 Test Org', v_manager_id) RETURNING id INTO v_org_id;
+  INSERT INTO org_memberships (org_id, user_id, role, accepted_at)
+  VALUES (v_org_id, v_manager_id, 'manager', now());
+  INSERT INTO vessels (id, org_id, name)
+  VALUES (gen_random_uuid(), v_org_id, 'X01 Vessel') RETURNING id INTO v_vessel_id;
+  INSERT INTO crew_positions (id, vessel_id, title)
+  VALUES (gen_random_uuid(), v_vessel_id, 'X01 Officer') RETURNING id INTO v_position_id;
+  INSERT INTO crew_assignments (position_id, user_id, start_date)
+  VALUES (v_position_id, v_crew_id, CURRENT_DATE - 10);
+
+  -- Manager context: write a rotation FOR the crew member. This exercises the
+  -- real INSERT policy arm: is_manager_of_user(user_id) AND user_id <> auth.uid()
+  -- AND created_via = 'manager'.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_manager_id::text)::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+  INSERT INTO rotations (user_id, start_date, end_date, rotation_type, crew_member, created_via)
+  VALUES (v_crew_id, CURRENT_DATE, CURRENT_DATE + 14, 'onboard', 'crew_a', 'manager');
+
+  -- Crew context: the member must SELECT it back (this is what sync.ts pulls)
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_crew_id::text)::text, true);
+  SELECT count(*) INTO v_count FROM rotations WHERE user_id = v_crew_id AND created_via = 'manager';
+
+  -- Cleanup as superuser (RLS off)
+  PERFORM set_config('role', 'postgres', true);
+  DELETE FROM rotations WHERE user_id = v_crew_id;
+  DELETE FROM crew_assignments WHERE position_id = v_position_id;
+  DELETE FROM crew_positions WHERE id = v_position_id;
+  DELETE FROM vessels WHERE id = v_vessel_id;
+  DELETE FROM org_memberships WHERE org_id = v_org_id;
+  DELETE FROM organizations WHERE id = v_org_id;
+  DELETE FROM auth.users WHERE id IN (v_manager_id, v_crew_id);
+
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'X-01 FIXTURE FAILED: crew member cannot read manager-authored rotation (count=%). The rotations SELECT policy user_id = auth.uid() arm is broken — mgmt→crew sync would silently stop.', v_count;
+  END IF;
+  RAISE NOTICE 'X-01 PASSED: crew member reads manager-authored rotation';
+END $$;
+SELECT 'X01_OK';
+SQL
+)
+
+if echo "$X01_RESULT" | grep -q 'X01_OK'; then
+  echo "==> X-01 fixture: PASSED (crew reads manager-authored rotation)"
+else
+  echo "==> X-01 fixture: FAILED"
+  echo "$X01_RESULT"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# X-02 Fixture: Crew-role member must NOT be able to write org tables
+#
+# Table ownership contract: org tables are management-app-owned; the crew app
+# is read-only. A crew-role membership must not satisfy any org_events write
+# policy ("Managers can insert org events").
+# ---------------------------------------------------------------------------
+echo "==> Running X-02 fixture (crew member cannot write org_events)..."
+
+X02_RESULT=$(psql "$LOCAL_DB_URL" --tuples-only --no-align <<'SQL'
+DO $$
+DECLARE
+  v_manager_id UUID := gen_random_uuid();
+  v_crew_id    UUID := gen_random_uuid();
+  v_org_id     UUID;
+  v_vessel_id  UUID;
+  v_insert_ok  BOOLEAN := false;
+BEGIN
+  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, aud, role)
+  VALUES
+    (v_manager_id, 'x02-manager-test@example.com', 'x', now(), now(), now(), '{}', '{}', 'authenticated', 'authenticated'),
+    (v_crew_id,    'x02-crew-test@example.com',    'x', now(), now(), now(), '{}', '{}', 'authenticated', 'authenticated')
+  ON CONFLICT (id) DO NOTHING;
+
+  INSERT INTO organizations (id, name, created_by)
+  VALUES (gen_random_uuid(), 'X02 Test Org', v_manager_id) RETURNING id INTO v_org_id;
+  INSERT INTO org_memberships (org_id, user_id, role, accepted_at)
+  VALUES (v_org_id, v_manager_id, 'manager', now()),
+         (v_org_id, v_crew_id, 'crew', now());
+  INSERT INTO vessels (id, org_id, name)
+  VALUES (gen_random_uuid(), v_org_id, 'X02 Vessel') RETURNING id INTO v_vessel_id;
+
+  -- Crew context: attempt to INSERT an org event — must be rejected by RLS
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_crew_id::text)::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+  BEGIN
+    INSERT INTO org_events (vessel_id, event_type, title, start_date, end_date, created_by)
+    VALUES (v_vessel_id, 'test', 'X02 Illegal Event', CURRENT_DATE, CURRENT_DATE + 1, v_crew_id);
+    v_insert_ok := true;
+  EXCEPTION
+    WHEN insufficient_privilege THEN v_insert_ok := false;
+    WHEN others THEN v_insert_ok := false;
+  END;
+
+  PERFORM set_config('role', 'postgres', true);
+  DELETE FROM org_events WHERE vessel_id = v_vessel_id;
+  DELETE FROM vessels WHERE id = v_vessel_id;
+  DELETE FROM org_memberships WHERE org_id = v_org_id;
+  DELETE FROM organizations WHERE id = v_org_id;
+  DELETE FROM auth.users WHERE id IN (v_manager_id, v_crew_id);
+
+  IF v_insert_ok THEN
+    RAISE EXCEPTION 'X-02 FIXTURE FAILED: a crew-role member inserted into org_events. Org-table write policies are broken.';
+  END IF;
+  RAISE NOTICE 'X-02 PASSED: crew member blocked from writing org_events';
+END $$;
+SELECT 'X02_OK';
+SQL
+)
+
+if echo "$X02_RESULT" | grep -q 'X02_OK'; then
+  echo "==> X-02 fixture: PASSED (crew blocked from writing org_events)"
+else
+  echo "==> X-02 fixture: FAILED"
+  echo "$X02_RESULT"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # SEC-01 Assertion: No SECURITY DEFINER function may be anon-executable
 #
 # Guards against the regression class where CREATE OR REPLACE FUNCTION in a
@@ -279,4 +423,4 @@ else
 fi
 
 echo ""
-echo "==> migration-replay.sh complete. All migrations applied; P-02, P-04 and SEC-01 checks passed."
+echo "==> migration-replay.sh complete. All migrations applied; P-02, P-04, X-01, X-02 and SEC-01 checks passed."
