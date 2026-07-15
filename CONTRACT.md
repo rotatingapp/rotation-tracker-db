@@ -38,6 +38,28 @@ The crew app (`rotationtracker.app`) reads from these management-app-owned table
 
 ---
 
+## Acknowledgement loop: `rotation_acks` (migration 020) — crew-written, manager-read
+
+A third ownership quadrant. The crew app INSERTs/UPDATEs rows for the member's **own**
+rotations only (`delivered_at` on arrival, `acknowledged_at` on explicit tap); the
+management app has read-only access via `is_manager_of_user`. **Managers have no write
+path — acks cannot be faked** (X-03 replay fixture guards this). The manager RPCs
+(SECURITY DEFINER) delete a rotation's ack row when its content changes, since the
+member acknowledged the old content.
+
+| Column | Written by | Read by | Purpose |
+|--------|-----------|---------|---------|
+| `rotation_id` (PK, FK→rotations CASCADE) | crew | both | one ack state per rotation |
+| `user_id` | crew (must = auth.uid()) | both | the member; manager-read scope key |
+| `delivered_at` | crew (on sync/realtime arrival) | management | "their device has it" |
+| `acknowledged_at` | crew (explicit tap) | management | "the human confirmed it" |
+
+Related: `rotations.requires_ack BOOLEAN` (migration 020) — set only through
+`manager_upsert_rotation` / `manager_bulk_create_rotations` (both gained
+`p_requires_ack BOOLEAN DEFAULT false`; old signatures were DROPPED, not overloaded).
+
+---
+
 ## Realtime publication (migration 019)
 
 The `supabase_realtime` publication is part of this contract: the crew app holds live
@@ -50,6 +72,7 @@ RLS-scoped — subscribers only receive rows they can SELECT.
 | `rotations` | `user_id=eq.<self>` and `user_id=eq.<partner>` | Manager paint/auto-fill and partner changes appear on an open crew app without a sync cycle |
 | `org_events` | `vessel_id=eq.<vessel>` | New/changed vessel events overlay live |
 | `important_dates` | `user_id=eq.<self>` | Manager-authored dates (migration 018 RPCs) land live in the member's Settings |
+| `rotation_acks` | manager-side: `user_id=eq.<member>` | Ack states update live on the manager's open views (migration 020) |
 
 Membership is codified idempotently in `migrations/019_realtime_publication.sql`
 (`rotations` was originally added via the dashboard). Any new table that gains a crew

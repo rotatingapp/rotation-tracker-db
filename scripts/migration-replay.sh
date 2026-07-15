@@ -383,6 +383,120 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# X-03 Fixture: Ack integrity — only the member can record their own acks
+#
+# The ack loop's trust value depends on acks being unfakeable: the crew member
+# records delivery/acknowledgement on their OWN rotations only; managers have
+# read-only access; another crew member can't touch them.
+# ---------------------------------------------------------------------------
+echo "==> Running X-03 fixture (ack integrity: member-only writes)..."
+
+X03_RESULT=$(psql "$LOCAL_DB_URL" --tuples-only --no-align <<'SQL'
+DO $$
+DECLARE
+  v_manager_id  UUID := gen_random_uuid();
+  v_crew_a_id   UUID := gen_random_uuid();
+  v_crew_b_id   UUID := gen_random_uuid();
+  v_org_id      UUID;
+  v_vessel_id   UUID;
+  v_position_id UUID;
+  v_rotation_id UUID;
+  v_ok          BOOLEAN;
+  v_count       INT;
+BEGIN
+  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, aud, role)
+  VALUES
+    (v_manager_id, 'x03-manager-test@example.com', 'x', now(), now(), now(), '{}', '{}', 'authenticated', 'authenticated'),
+    (v_crew_a_id,  'x03-crew-a-test@example.com',  'x', now(), now(), now(), '{}', '{}', 'authenticated', 'authenticated'),
+    (v_crew_b_id,  'x03-crew-b-test@example.com',  'x', now(), now(), now(), '{}', '{}', 'authenticated', 'authenticated')
+  ON CONFLICT (id) DO NOTHING;
+
+  INSERT INTO organizations (id, name, created_by)
+  VALUES (gen_random_uuid(), 'X03 Test Org', v_manager_id) RETURNING id INTO v_org_id;
+  INSERT INTO org_memberships (org_id, user_id, role, accepted_at)
+  VALUES (v_org_id, v_manager_id, 'manager', now());
+  INSERT INTO vessels (id, org_id, name)
+  VALUES (gen_random_uuid(), v_org_id, 'X03 Vessel') RETURNING id INTO v_vessel_id;
+  INSERT INTO crew_positions (id, vessel_id, title)
+  VALUES (gen_random_uuid(), v_vessel_id, 'X03 Officer') RETURNING id INTO v_position_id;
+  INSERT INTO crew_assignments (position_id, user_id, start_date)
+  VALUES (v_position_id, v_crew_a_id, CURRENT_DATE - 10);
+
+  -- Manager writes a require-ack rotation for crew A via the real RPC
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_manager_id::text)::text, true);
+  PERFORM set_config('role', 'authenticated', true);
+  v_rotation_id := manager_upsert_rotation(
+    v_crew_a_id, CURRENT_DATE, CURRENT_DATE + 14, 'onboard', 'crew_a',
+    NULL, NULL, NULL, true
+  );
+
+  -- (a) Crew A records delivery + acknowledgement on their own rotation — must SUCCEED
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_crew_a_id::text)::text, true);
+  INSERT INTO rotation_acks (rotation_id, user_id, delivered_at, acknowledged_at)
+  VALUES (v_rotation_id, v_crew_a_id, now(), now());
+  SELECT count(*) INTO v_count FROM rotation_acks WHERE rotation_id = v_rotation_id;
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'X-03 FIXTURE FAILED: crew member could not record their own ack';
+  END IF;
+  -- Reset as superuser (crew has no DELETE policy — deliberately). Without
+  -- this, (b)/(c) would fail on the rotation_id PRIMARY KEY instead of RLS
+  -- and the fixture would pass for the wrong reason.
+  PERFORM set_config('role', 'postgres', true);
+  DELETE FROM rotation_acks WHERE rotation_id = v_rotation_id;
+  PERFORM set_config('role', 'authenticated', true);
+
+  -- (b) Manager attempts to fake the ack — must be REJECTED
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_manager_id::text)::text, true);
+  v_ok := false;
+  BEGIN
+    INSERT INTO rotation_acks (rotation_id, user_id, delivered_at, acknowledged_at)
+    VALUES (v_rotation_id, v_crew_a_id, now(), now());
+    v_ok := true;
+  EXCEPTION WHEN others THEN v_ok := false;
+  END;
+  IF v_ok THEN
+    RAISE EXCEPTION 'X-03 FIXTURE FAILED: a manager inserted an ack for a crew member — acks are fakeable';
+  END IF;
+
+  -- (c) Crew B attempts to ack a rotation that is not theirs — must be REJECTED
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_crew_b_id::text)::text, true);
+  v_ok := false;
+  BEGIN
+    INSERT INTO rotation_acks (rotation_id, user_id, delivered_at)
+    VALUES (v_rotation_id, v_crew_b_id, now());
+    v_ok := true;
+  EXCEPTION WHEN others THEN v_ok := false;
+  END;
+  IF v_ok THEN
+    RAISE EXCEPTION 'X-03 FIXTURE FAILED: crew B acked crew A''s rotation — ownership check is broken';
+  END IF;
+
+  -- Cleanup as superuser (RLS off)
+  PERFORM set_config('role', 'postgres', true);
+  DELETE FROM rotation_acks WHERE rotation_id = v_rotation_id;
+  DELETE FROM rotations WHERE user_id = v_crew_a_id;
+  DELETE FROM crew_assignments WHERE position_id = v_position_id;
+  DELETE FROM crew_positions WHERE id = v_position_id;
+  DELETE FROM vessels WHERE id = v_vessel_id;
+  DELETE FROM org_memberships WHERE org_id = v_org_id;
+  DELETE FROM organizations WHERE id = v_org_id;
+  DELETE FROM auth.users WHERE id IN (v_manager_id, v_crew_a_id, v_crew_b_id);
+
+  RAISE NOTICE 'X-03 PASSED: ack writes are member-only';
+END $$;
+SELECT 'X03_OK';
+SQL
+)
+
+if echo "$X03_RESULT" | grep -q 'X03_OK'; then
+  echo "==> X-03 fixture: PASSED (ack writes are member-only)"
+else
+  echo "==> X-03 fixture: FAILED"
+  echo "$X03_RESULT"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # SEC-01 Assertion: No SECURITY DEFINER function may be anon-executable
 #
 # Guards against the regression class where CREATE OR REPLACE FUNCTION in a
@@ -423,4 +537,4 @@ else
 fi
 
 echo ""
-echo "==> migration-replay.sh complete. All migrations applied; P-02, P-04, X-01, X-02 and SEC-01 checks passed."
+echo "==> migration-replay.sh complete. All migrations applied; P-02, P-04, X-01, X-02, X-03 and SEC-01 checks passed."
