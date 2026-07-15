@@ -38,6 +38,25 @@ The crew app (`rotationtracker.app`) reads from these management-app-owned table
 
 ---
 
+## Realtime publication (migration 019)
+
+The `supabase_realtime` publication is part of this contract: the crew app holds live
+`postgres_changes` subscriptions against it (`src/lib/db/realtime.ts`), so removing a
+table from the publication silently kills a shipped feature. Realtime delivery is
+RLS-scoped — subscribers only receive rows they can SELECT.
+
+| Table | Crew subscription filter | Purpose |
+|-------|--------------------------|---------|
+| `rotations` | `user_id=eq.<self>` and `user_id=eq.<partner>` | Manager paint/auto-fill and partner changes appear on an open crew app without a sync cycle |
+| `org_events` | `vessel_id=eq.<vessel>` | New/changed vessel events overlay live |
+| `important_dates` | `user_id=eq.<self>` | Manager-authored dates (migration 018 RPCs) land live in the member's Settings |
+
+Membership is codified idempotently in `migrations/019_realtime_publication.sql`
+(`rotations` was originally added via the dashboard). Any new table that gains a crew
+subscription must be added there, not via the dashboard.
+
+---
+
 ## Columns safe to add or change without coordination
 
 These columns exist on the tables above but are **not consumed cross-app**. They can be added, modified, or removed without coordination between the crew app and management app:
