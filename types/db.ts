@@ -409,6 +409,35 @@ export type Database = {
         }
         Relationships: []
       }
+      rotation_acks: {
+        Row: {
+          acknowledged_at: string | null
+          delivered_at: string | null
+          rotation_id: string
+          user_id: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          delivered_at?: string | null
+          rotation_id: string
+          user_id: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          delivered_at?: string | null
+          rotation_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rotation_acks_rotation_id_fkey"
+            columns: ["rotation_id"]
+            isOneToOne: true
+            referencedRelation: "rotations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rotation_audit: {
         Row: {
           action: string
@@ -456,6 +485,7 @@ export type Database = {
           location: string | null
           locked: boolean | null
           notes: string | null
+          requires_ack: boolean
           rotation_type: string
           start_date: string
           timezone: string
@@ -472,6 +502,7 @@ export type Database = {
           location?: string | null
           locked?: boolean | null
           notes?: string | null
+          requires_ack?: boolean
           rotation_type: string
           start_date: string
           timezone?: string
@@ -488,6 +519,7 @@ export type Database = {
           location?: string | null
           locked?: boolean | null
           notes?: string | null
+          requires_ack?: boolean
           rotation_type?: string
           start_date?: string
           timezone?: string
@@ -626,7 +658,7 @@ export type Database = {
         Returns: string
       }
       manager_bulk_create_rotations: {
-        Args: { p_rotations: Json; p_user_id: string }
+        Args: { p_requires_ack?: boolean; p_rotations: Json; p_user_id: string }
         Returns: number
       }
       manager_delete_important_date: {
@@ -647,6 +679,7 @@ export type Database = {
           p_end_date: string
           p_location?: string
           p_notes?: string
+          p_requires_ack?: boolean
           p_rotation_id?: string
           p_rotation_type: string
           p_start_date: string
